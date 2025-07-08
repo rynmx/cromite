@@ -37,6 +37,7 @@ jobs:
       OUTPUTFILE_X64: /storage/images/${{ github.event.inputs.sha }}/android/false/x64/
       OUTPUTFILE_WIN: /storage/images/${{ github.event.inputs.sha }}/win/x64/
       OUTPUTFILE_LIN: /storage/images/${{ github.event.inputs.sha }}/linux/false/lin64/
+      OUTPUTFILE_MAC: /storage/images/${{ github.event.inputs.sha }}/mac/arm64/
 
     steps:
       - name: Login to Docker Hub
@@ -182,6 +183,72 @@ jobs:
 
           echo Uploading chrome-lin64.tar.gz
           $GH release upload $VERSION-$CROMITE_SHA chrome-lin64.tar.gz
+          echo "::endgroup::"
+
+          # macOS
+          echo "::group::-------- macOS arm64"
+          mkdir -p chrome-mac/Cromite.app/Contents/MacOS
+          mkdir -p chrome-mac/Cromite.app/Contents/Frameworks
+          mkdir -p chrome-mac/Cromite.app/Contents/Resources
+          
+          # Create Info.plist
+          cat > chrome-mac/Cromite.app/Contents/Info.plist << 'EOT'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+                <key>CFBundleDevelopmentRegion</key>
+                <string>English</string>
+                <key>CFBundleExecutable</key>
+                <string>chrome</string>
+                <key>CFBundleIconFile</key>
+                <string>app.icns</string>
+                <key>CFBundleIdentifier</key>
+                <string>org.cromite.cromite</string>
+                <key>CFBundleInfoDictionaryVersion</key>
+                <string>6.0</string>
+                <key>CFBundleName</key>
+                <string>Cromite</string>
+                <key>CFBundlePackageType</key>
+                <string>APPL</string>
+                <key>CFBundleShortVersionString</key>
+                <string>$VERSION</string>
+                <key>CFBundleSignature</key>
+                <string>????</string>
+                <key>CFBundleVersion</key>
+                <string>$VERSION</string>
+                <key>LSApplicationCategoryType</key>
+                <string>public.app-category.productivity</string>
+                <key>LSMinimumSystemVersion</key>
+                <string>11.0</string>
+                <key>NSHighResolutionCapable</key>
+                <true/>
+                <key>NSSupportsAutomaticGraphicsSwitching</key>
+                <true/>
+            </dict>
+            </plist>
+            EOT
+
+          # Copy executables
+          cp $OUTPUTFILE_MAC/chrome chrome-mac/Cromite.app/Contents/MacOS/
+          cp $OUTPUTFILE_MAC/chrome_crashpad_handler chrome-mac/Cromite.app/Contents/MacOS/
+          
+          # Copy resources
+          cp $OUTPUTFILE_MAC/chrome_100_percent.pak chrome-mac/Cromite.app/Contents/Resources/
+          cp $OUTPUTFILE_MAC/chrome_200_percent.pak chrome-mac/Cromite.app/Contents/Resources/
+          cp $OUTPUTFILE_MAC/icudtl.dat chrome-mac/Cromite.app/Contents/Resources/
+          cp $OUTPUTFILE_MAC/resources.pak chrome-mac/Cromite.app/Contents/Resources/
+          cp $OUTPUTFILE_MAC/snapshot_blob.bin chrome-mac/Cromite.app/Contents/Resources/
+          cp -r $OUTPUTFILE_MAC/locales/ chrome-mac/Cromite.app/Contents/Resources/locales
+          
+          # Copy frameworks
+          cp -r $OUTPUTFILE_MAC/*.dylib chrome-mac/Cromite.app/Contents/Frameworks/ || true
+
+          # Create DMG
+          hdiutil create -volname "Cromite" -srcfolder chrome-mac -ov -format UDZO chrome-mac-arm64.dmg
+
+          echo Uploading chrome-mac-arm64.dmg
+          $GH release upload $VERSION-$CROMITE_SHA chrome-mac-arm64.dmg
           echo "::endgroup::"
 
           echo "::group::-------- arm64 symbols"

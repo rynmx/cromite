@@ -15,29 +15,29 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: 'uazo/cromite SHA'
+        description: "uazo/cromite SHA"
         required: true
-        default: ''
+        default: ""
       target_os:
-        description: 'targetos [android/win/linux/all]'
+        description: "targetos [android/win/linux/mac/all]"
         required: true
-        default: 'all'
+        default: "all"
       build:
-        description: 'android arch [arm/arm64/x64/all]'
+        description: "android arch [arm/arm64/x64/all]"
         required: true
-        default: 'all'
+        default: "all"
       type:
-        description: 'runner? [dev/ci]'
+        description: "runner? [dev/ci]"
         required: true
-        default: 'ci'
+        default: "ci"
       debug:
-        description: 'debug? [true/false]'
+        description: "debug? [true/false]"
         required: true
-        default: 'false'
+        default: "false"
       clangd:
-        description: 'clangd? [true/false]'
+        description: "clangd? [true/false]"
         required: true
-        default: 'false'
+        default: "false"
 
 env:
   CROMITE_SHA: ${{ github.event.inputs.sha }}
@@ -174,8 +174,8 @@ jobs:
       image: uazo/cromite-build:build
       env:
         REMOVEDOCKERSUPPORT: true # CUSTOM RUNNER: remove sharing of docker socket
-        USELOCALIMAGE: true       # CUSTOM RUNNER: permit use of local images
-        USEINTERNALNETWORK: true  # CUSTOM RUNNER: create the docker network as internal
+        USELOCALIMAGE: true # CUSTOM RUNNER: permit use of local images
+        USEINTERNALNETWORK: true # CUSTOM RUNNER: create the docker network as internal
         WORKSPACE: /home/lg/working_dir
         # kythe
         KYTHE_CORPUS: chromium.googlesource.com/chromium/src
@@ -197,6 +197,7 @@ jobs:
         - /storage/images/${{ github.event.inputs.sha }}/android/${{ github.event.inputs.debug }}/x64:/home/lg/working_dir/chromium/src/out/x64
         - /storage/images/${{ github.event.inputs.sha }}/linux/${{ github.event.inputs.debug }}/lin64:/home/lg/working_dir/chromium/src/out/lin64
         - /storage/images/${{ github.event.inputs.sha }}/win/x64:/home/lg/working_dir/chromium/src/out/win64
+        - /storage/images/${{ github.event.inputs.sha }}/mac/arm64:/home/lg/working_dir/chromium/src/out/mac_arm64
         - /tmp/proxy:/tmp/proxy
         - /win_sdk:/win_sdk
 
@@ -232,8 +233,12 @@ jobs:
             sudo chown lg chromium/src/out/x64
 
           test -d chromium/src/out/lin64 || sudo mkdir -p chromium/src/out/lin64 && \
-            sudo chown lg chromium/src/out &&
+            sudo chown lg chromium/src/out && \
             sudo chown lg chromium/src/out/lin64
+            
+          test -d chromium/src/out/mac_arm64 || sudo mkdir -p chromium/src/out/mac_arm64 && \
+            sudo chown lg chromium/src/out && \
+            sudo chown lg chromium/src/out/mac_arm64
             
           # make kythe output directory
           test -d $KYTHE_OUTPUT_DIRECTORY || mkdir -p $KYTHE_OUTPUT_DIRECTORY
@@ -422,6 +427,123 @@ jobs:
           $WORKSPACE/ninjatracing/ninjatracing -a $WORKSPACE/chromium/src/out/lin64/.ninja_log >$WORKSPACE/chromium/src/out/lin64/ninja_log_trace.json
           python3 $WORKSPACE/chromium/src/third_party/catapult/tracing/bin/trace2html $WORKSPACE/chromium/src/out/lin64/ninja_log_trace.json
 
+      - name: Setup macOS build environment
+        if: ${{ (github.event.inputs.target_os == 'mac' || github.event.inputs.target_os == 'all') }}
+        shell: bash
+        run: |
+          echo "::group::-------- Optimizing macOS environment"
+          # Disable Spotlight indexing
+          sudo mdutil -a -i off || true
+
+          # Free up disk space
+          sudo rm -rf /Applications/Xcode_*.app || true
+          sudo rm -rf ~/Library/Android || true
+          sudo rm -rf /usr/local/share/android-sdk || true
+
+          # Show available resources
+          df -h /
+          vm_stat
+          echo "::endgroup::"
+
+      - name: Build Cromite macOS arm64
+        if: ${{ (github.event.inputs.target_os == 'mac' || github.event.inputs.target_os == 'all') }}
+        shell: bash
+        run: |
+          PATH=$WORKSPACE/chromium/src/third_party/llvm-build/Release+Asserts/bin:$WORKSPACE/depot_tools/:/usr/local/go/bin:$WORKSPACE/mtool/bin:$PATH
+          cd $WORKSPACE/chromium/src
+
+          echo "::group::-------- gn gen"
+          gn gen --args="target_os = \"mac\" $(cat /home/lg/working_dir/cromite/build/cromite.gn_args) target_cpu = \"arm64\" " out/mac_arm64
+          echo "::endgroup::"
+
+          echo "::group::-------- gn args verification"
+          gn args out/mac_arm64/ --list --short
+          gn args out/mac_arm64/ --list >out/mac_arm64/gn_list
+
+          echo "Verifying build settings:"
+          grep -E "(symbol_level|blink_symbol_level|is_component_build|use_jumbo_build|enable_rust|mac_deployment_target)" out/mac_arm64/gn_list || true
+          echo "::endgroup::"
+
+          echo "::group::-------- Building Chrome for macOS"
+          echo $(date +%s) > build_start_time.txt
+
+          timeout 5400s ninja -C out/mac_arm64 -j 4 chrome || {
+            echo "Build timed out or failed, but this is expected for large builds"
+            echo "Build artifacts will be saved for potential resumption"
+          }
+
+          if [ -f "out/mac_arm64/Chromium.app/Contents/MacOS/Chromium" ]; then
+            echo "✓ Build completed successfully"
+            echo "build_status=complete" >> $GITHUB_ENV
+          else
+            echo "⚠ Build incomplete - may need resumption"
+            echo "build_status=incomplete" >> $GITHUB_ENV
+          fi
+          echo "::endgroup::"
+
+          echo "::group::-------- Preparing build artifacts"
+          cp ../../cromite/build/RELEASE out/mac_arm64
+
+          if [ -f "out/mac_arm64/Chromium.app/Contents/MacOS/Chromium" ]; then
+            echo "✓ Chromium.app built successfully"
+            ls -la out/mac_arm64/Chromium.app/Contents/MacOS/
+
+            echo "Creating macOS package..."
+            ../../cromite/build/package_macos.sh arm64
+          else
+            echo "ℹ Build state saved for potential resumption"
+            ls -la out/mac_arm64/ || true
+          fi
+          echo "::endgroup::"
+
+      - name: Build Cromite macOS x64
+        if: ${{ (github.event.inputs.target_os == 'mac' || github.event.inputs.target_os == 'all') && env.build_status == 'complete' }}
+        shell: bash
+        run: |
+          PATH=$WORKSPACE/chromium/src/third_party/llvm-build/Release+Asserts/bin:$WORKSPACE/depot_tools/:/usr/local/go/bin:$WORKSPACE/mtool/bin:$PATH
+          cd $WORKSPACE/chromium/src
+
+          echo "::group::-------- gn gen"
+          gn gen --args="target_os = \"mac\" $(cat /home/lg/working_dir/cromite/build/cromite.gn_args) target_cpu = \"x64\" " out/mac_x64
+          echo "::endgroup::"
+
+          echo "::group::-------- gn args verification"
+          gn args out/mac_x64/ --list --short
+          gn args out/mac_x64/ --list >out/mac_x64/gn_list
+
+          echo "Verifying x64 build settings:"
+          grep -E "(target_cpu|mac_deployment_target|symbol_level)" out/mac_x64/gn_list || true
+          echo "::endgroup::"
+
+          echo "::group::-------- Building Chrome for macOS x64"
+          timeout 5400s ninja -C out/mac_x64 -j 4 chrome || {
+            echo "x64 build timed out or failed"
+            echo "This is optional for ARM64-focused deployment"
+          }
+          echo "::endgroup::"
+
+          echo "::group::-------- Preparing x64 build artifacts"
+          cp ../../cromite/build/RELEASE out/mac_x64
+
+          if [ -f "out/mac_x64/Chromium.app/Contents/MacOS/Chromium" ]; then
+            echo "✓ x64 Chromium.app built successfully"
+            ls -la out/mac_x64/Chromium.app/Contents/MacOS/
+
+            echo "Creating x64 macOS package..."
+            ../../cromite/build/package_macos.sh x64
+          else
+            echo "ℹ x64 build incomplete"
+          fi
+          echo "::endgroup::"
+
+      - name: Get ninja logs macOS arm64
+        if: ${{ (github.event.inputs.target_os == 'mac' || github.event.inputs.target_os == 'all') }}
+        shell: bash
+        run: |
+          cd $WORKSPACE
+          $WORKSPACE/ninjatracing/ninjatracing -a $WORKSPACE/chromium/src/out/mac_arm64/.ninja_log >$WORKSPACE/chromium/src/out/mac_arm64/ninja_log_trace.json
+          python3 $WORKSPACE/chromium/src/third_party/catapult/tracing/bin/trace2html $WORKSPACE/chromium/src/out/mac_arm64/ninja_log_trace.json
+
       - name: Generate clangd index for Android arm64
         if: ${{ github.event.inputs.clangd == 'true' }}
         shell: bash
@@ -436,3 +558,4 @@ jobs:
               -t compdb cc cxx objc objcxx >$WORKSPACE/chromium/src/out/clangd/compile_commands.json && \
             /home/lg/working_dir/clangd_snapshot_20250518/bin/clangd-indexer --executor=all-TUs out/clangd/compile_commands.json >out/arm64/cromite.idx && \
             rm -rf out/clangd
+

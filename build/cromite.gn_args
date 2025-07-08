@@ -42,16 +42,14 @@ enable_dav1d_decoder=true
 media_use_openh264 = false
 
 # decoder flags
-if (target_os == "android" || target_os == "win") {
+if (target_os == "android" || target_os == "win" || target_os == "mac") {
   # codec supported by default
   # android: https://developer.android.com/media/platform/supported-formats
   # windows: https://learn.microsoft.com/en-us/windows/win32/medfound/codecobjects
+  # macOS: Hardware acceleration via VideoToolbox
 
-  # enable aac and h264 hw decoder only
   enable_platform_aac_audio = true
   enable_platform_h264_video = true
-
-  # enable hw decoder for h265 (hevc)
   enable_platform_hevc = true
 
   # disable dolby vision
@@ -59,7 +57,6 @@ if (target_os == "android" || target_os == "win") {
   enable_platform_encrypted_dolby_vision = false
 
   if (target_os == "win") {
-    # enable ac3/eac codec
     enable_platform_ac3_eac3_audio = true
   }
 }
@@ -183,4 +180,48 @@ if (target_os == "linux") {
 
   use_sysroot = true
   chrome_pgo_phase = 2 # enable pgo
+}
+
+if (target_os == "mac") {
+  target_os = "mac"  # fix traffic annotation auditor
+  target_cpu = "arm64"  # can be overridden for x64
+
+  symbol_level = 1
+  blink_symbol_level = 0
+
+  # Enable necessary features
+  enable_pdf = true
+  pdf_is_complete_lib = true
+  enable_plugins = true
+  enable_ppapi = false
+
+  # Build optimizations
+  is_component_build = false
+  use_jumbo_build = true
+  optimize_webui = true
+  enable_nacl = false
+  enable_iterator_debugging = false
+
+  # Performance optimizations
+  chrome_pgo_phase = 2
+  is_debug = false
+  is_official_build = true
+
+  # Modern features
+  enable_rust = true
+  enable_swiftshader = true
+
+  # Security and compatibility
+  use_sysroot = false
+  is_clang = true
+  fatal_linker_warnings = false
+
+  # Mac-specific settings
+  use_system_xcode = true
+  mac_deployment_target = "12.0"
+
+  # Codec support
+  ffmpeg_branding = "Chrome"
+  proprietary_codecs = true
+  enable_mse_mpeg2ts_stream_parser = true
 }
